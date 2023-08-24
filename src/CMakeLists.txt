@@ -5,7 +5,7 @@
 cmake_minimum_required(VERSION "3.17")
 
 # name of this example project
-project(simple-demo)
+project(Detection)
 
 # set OpenCV_DIR variable equal to the path to the cmake
 # files within the previously installed opencv program
@@ -27,9 +27,9 @@ include_directories( ${OpenCV_INCLUDE_DIRS} )
 
 # specify the executable target to be built
 add_executable(yolov6 yolov6.cpp)
-add_executable(tests tests.cpp)
+add_executable(detection detection.cpp)
 
 # tell it to link the executable target against OpenCV
 # path like /xxx/yyy/opencv/install/lib
 target_link_libraries(yolov6 ${OpenCV_LIBS} )
-target_link_libraries(tests ${OpenCV_LIBS} )
+target_link_libraries(detection ${OpenCV_LIBS} )

@@ -25,6 +25,33 @@ const float SCORE_THRESHOLD = 0.5;
 const float NMS_THRESHOLD = 0.45;
 const float CONFIDENCE_THRESHOLD = 0.45;
 
+// (Default) Arguments.
+class Args
+{
+public:
+    Args() : model_path("../models/yolov6.onnx"), host("gabriel.local"), use_gpu(true) {
+        class_list = {
+            "person", "bicycle", "car", "motorbike", "aeroplane", 
+            "bus", "train", "truck", "boat", "traffic light", "fire hydrant", 
+            "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", 
+            "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack", 
+            "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", 
+            "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", 
+            "surfboard", "tennis racket", "bottle", "wine glass", "cup", "fork", 
+            "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange", 
+            "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", 
+            "sofa", "pottedplant", "bed", "diningtable", "toilet", "tvmonitor", 
+            "laptop", "mouse", "remote", "keyboard", "cell phone", "microwave", 
+            "oven", "toaster", "sink", "refrigerator", "book",
+            "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush"
+        };
+    }
+    string model_path;
+    string host;
+    bool use_gpu;
+    vector<string> class_list;
+};
+
 // Frame Buffer.
 mutex frame_mutex;
 const int FRAME_SIZE = (int)IMAGE_WIDTH * (int)IMAGE_HEIGHT * 3;
@@ -43,21 +70,52 @@ Scalar YELLOW = Scalar(0, 255, 255);
 Scalar RED = Scalar(0,0,255);
 Scalar WHITE = Scalar(255,255,255);
 
-inline void parse_args(int argc, char** argv, Net& net, string& host, FILE *&pipein, vector<string>& class_list)
+// Functions.
+inline FILE* connect_to_video_host(string host, bool use_gpu)
+{
+    const char* ffmpeg_cmd_format = 
+      "ffmpeg -nostdin -probesize 32 -flags low_delay -fflags nobuffer "
+      "-codec:v %s -r 25 -i tcp://%s:5001 "
+      "-pix_fmt rgb24 -an -vcodec rawvideo -f rawvideo pipe: 2>/dev/null";
+
+    const char* codec = use_gpu ? "h264_cuvid" : "h264";
+
+    int size_s = std::snprintf( nullptr, 0, ffmpeg_cmd_format, codec, host.c_str() ) + 1;
+    if( size_s <= 0 ) {
+      fprintf( stderr, "Error formating ffmpeg command\n" );
+      exit(1);
+    }
+    auto size = static_cast<size_t>( size_s );
+    char ffmpeg_cmd[ size ];
+    std::snprintf( ffmpeg_cmd, size, ffmpeg_cmd_format, codec, host.c_str() );
+
+    FILE* video_stream = popen(ffmpeg_cmd, "r");
+    if (video_stream == NULL)
+    {
+        fprintf(stderr, "Error reading video stream from: %s\n", host.c_str());
+        exit(1);
+  }
+
+  printf("Connected to video stream at: %s\n", host.c_str());
+
+  return video_stream;
+}
+
+Args parse_args(int argc, char** argv)
 {
   const char* usage = "Run Yolov6 3.0. Connects to [hostname]:5001, and expects a 25fps 1280x1280 H264 encoded video stream.\n\n"
   "Usage: %s [options]\n\n"
     "Options:\n"
-    "    -m, --model <path>       Path to ONNX model.\n"
+    "    -m, --model <path>           Path to ONNX model. (default: ../models/yolov6)\n"
     "    -c, --classname-file <path>  Path to class name file.\n"
-    "    -g, --use-gpu <bool>     Use GPU or not. (default: true  [1])\n"
-    "    -H, --host <address>     Host address. (default: gabriel.local)\n"
-    "    -h, --help               Print this message.\n";
+    "    -g, --use-gpu <bool>         Use GPU or not. (default: true  [1])\n"
+    "    -H, --host <address>         Host address. (default: gabriel.local)\n"
+    "    -h, --help                   Print this message.\n";
 
   ifstream ifs;
   string classfile_line;
-  string model_path;
-  bool use_gpu = true;
+
+  Args args;
 
   int opt;
 
@@ -81,24 +139,24 @@ inline void parse_args(int argc, char** argv, Net& net, string& host, FILE *&pip
       switch (opt)
         {
         case 'm':
-          model_path = optarg;
+          args.model_path = optarg;
           break;
         
         case 'H':
-          host = optarg;
+          args.host = optarg;
           break;
 
         case 'c': case 'n':
-          class_list.clear();
+          args.class_list.clear();
           ifs.open(optarg);
           while (getline(ifs, classfile_line))
           {
-              class_list.push_back(classfile_line);
+              args.class_list.push_back(classfile_line);
           }
           break;
 
         case 'g':
-          use_gpu = atoi(optarg);
+          args.use_gpu = atoi(optarg);
           break;
 
         case 'h':
@@ -106,11 +164,13 @@ inline void parse_args(int argc, char** argv, Net& net, string& host, FILE *&pip
           exit(0);
           
         case '?':
-          perror("Unknown option...");
+          fprintf (stderr, "Unknown option character");
+          fprintf (stderr, usage, argv[0]);
           exit(1);
 
         case ':':
-          perror("Missing option arguments...");
+          fprintf (stderr, "Missing option argument");
+          fprintf (stderr, usage, argv[0]);
           exit(1);
 
         default:
@@ -118,70 +178,7 @@ inline void parse_args(int argc, char** argv, Net& net, string& host, FILE *&pip
         }
     }
 
-  printf("Connecting to %s...\n", host.c_str());
-
-  const char* ffmpeg_cmd_format = 
-    "ffmpeg -nostdin -probesize 32 -flags low_delay -fflags nobuffer "
-    "-codec:v %s -r 25 -i tcp://%s:5001 "
-    "-pix_fmt rgb24 -an -vcodec rawvideo -f rawvideo pipe: 2>/dev/null";
-
-  const char* codec = use_gpu ? "h264_cuvid" : "h264";
-
-  int size_s = std::snprintf( nullptr, 0, ffmpeg_cmd_format, codec, host.c_str() ) + 1;
-  if( size_s <= 0 ) {
-    perror( "Error during formatting.");
-    exit(1);
-  }
-  auto size = static_cast<size_t>( size_s );
-  char ffmpeg_cmd[ size ];
-  std::snprintf( ffmpeg_cmd, size, ffmpeg_cmd_format, codec, host.c_str() );
-
-  pipein = popen(ffmpeg_cmd, "r");
-  if (pipein == NULL)
-  {
-      perror("Error opening video stream!\n");
-      exit(1);
-  }
-
-  net = readNetFromONNX(model_path.empty() ? "yolov6.onnx" : model_path);
-  if (net.empty())
-  {
-      perror("Error loading model!\n");
-      exit(1);
-  }
-
-  if (use_gpu)
-  {
-      net.setPreferableBackend(DNN_BACKEND_CUDA);
-      net.setPreferableTarget(DNN_TARGET_CUDA);
-  }
-  else
-  {
-      net.setPreferableBackend(DNN_BACKEND_DEFAULT);
-      net.setPreferableTarget(DNN_TARGET_CPU);
-  }
-
-  // Print model information.
-  vector<String> outNames = net.getUnconnectedOutLayersNames();
-  vector<int> outLayers = net.getUnconnectedOutLayers();
-  for (int i = 0; i < outNames.size(); i++)
-  {
-      printf("Output Layer [%d]: %s\n", outLayers[i], outNames[i].c_str());
-
-      MatShape netInputShape{1, 3, 640, 640};
-      vector<MatShape> inLayerShape, outLayerShape;
-      net.getLayerShapes(netInputShape, outLayers[i], inLayerShape, outLayerShape);
-
-      printf("Output Layer Shape: ");
-      for (int j = 0; j < outLayerShape.size(); j++) {
-        for (int k = 0; k < outLayerShape[j].size(); k++)
-          printf("%d (%d, %d), ", outLayerShape[j][k], j, k);
-      }
-      printf("\n");
-  }
-  // Output layer size.
-
-  printf("Connected and loaded model!\n");
+  return args;
 }
 
 inline size_t read_frame(FILE * pipein)
@@ -296,15 +293,6 @@ Mat post_process_yolo(Mat &input_image, vector<Mat> &outputs, const vector<strin
     // Perform Non Maximum Suppression and draw predictions.
     vector<int> indices;
     NMSBoxes(boxes, cls_scores, SCORE_THRESHOLD, NMS_THRESHOLD, indices);
-    // Print class name and confidence.
-    // Print bounding box coordinates.
-    for (int i = 0; i < indices.size(); i++)
-    {
-        int idx = indices[i];
-        Rect box = boxes[idx];
-        printf("%s: %.2f\n", class_name[class_ids[idx]].c_str(), cls_scores[idx]);
-        printf("Bounding Box: (%d, %d) (%d, %d)\n", box.x, box.y, box.width, box.height);
-    }
 
     // Draw detections.
     for (int i = 0; i < indices.size(); i++)
@@ -312,6 +300,7 @@ Mat post_process_yolo(Mat &input_image, vector<Mat> &outputs, const vector<strin
         int idx = indices[i];
         Rect box = boxes[idx];
 
+        printf("%s: \t[%.2f] \t(%d, %d) (%d x %d)\n", class_name[class_ids[idx]].c_str(), cls_scores[idx], box.x, box.y, box.width, box.height);
         int left = box.x;
         int top = box.y;
         int width = box.width;
@@ -325,43 +314,43 @@ Mat post_process_yolo(Mat &input_image, vector<Mat> &outputs, const vector<strin
         // Draw class labels.
         draw_label(input_image, label, left, top);
     }
+    printf("\n");
     return input_image;
 }
 
 int main(int argc, char** argv)
 {
 
-    // Initialize variables.
-    Net net;
-    string host = "gabriel.local";
-    FILE *pipein = NULL;
-    vector<string> class_list = {
-        "person", "bicycle", "car", "motorbike", "aeroplane", 
-        "bus", "train", "truck", "boat", "traffic light", "fire hydrant", 
-        "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", 
-        "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack", 
-        "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", 
-        "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", 
-        "surfboard", "tennis racket", "bottle", "wine glass", "cup", "fork", 
-        "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange", 
-        "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", 
-        "sofa", "pottedplant", "bed", "diningtable", "toilet", "tvmonitor", 
-        "laptop", "mouse", "remote", "keyboard", "cell phone", "microwave", 
-        "oven", "toaster", "sink", "refrigerator", "book",
-        "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush"
-    };
+  Args args = parse_args(argc, argv);
+  FILE* video_stream = connect_to_video_host(args.host, args.use_gpu);
 
-    parse_args(argc, argv, net, host, pipein, class_list);
+  Net net = readNetFromONNX(args.model_path.empty() ? "yolov6.onnx" : args.model_path);
+  if (net.empty())
+  {
+      fprintf(stderr, "Error loading model!\n");
+      exit(1);
+  }
+
+  if (args.use_gpu)
+  {
+      net.setPreferableBackend(DNN_BACKEND_CUDA);
+      net.setPreferableTarget(DNN_TARGET_CUDA);
+  }
+  else
+  {
+      net.setPreferableBackend(DNN_BACKEND_DEFAULT);
+      net.setPreferableTarget(DNN_TARGET_CPU);
+  }
 
     // Wait for the first frame.
-    size_t bytes = read_frame(pipein);
+    size_t bytes = read_frame(video_stream);
     if (bytes < FRAME_SIZE)
     {
         printf("Error receiving first frame!\n");
         return -1;
     }
     printf("Received first frame!\n");
-    thread t1(read_frames, pipein);
+    thread t1(read_frames, video_stream);
 
     // Opencv Image Buffer.
     Mat frame(IMAGE_HEIGHT, IMAGE_WIDTH, CV_8UC3, frame_buffer);
@@ -376,7 +365,7 @@ int main(int argc, char** argv)
 
         vector<Mat> detections;
         detections = pre_process(input, net);
-        img = post_process_yolo(input, detections, class_list).clone();
+        img = post_process_yolo(input, detections, args.class_list).clone();
 
         vector<double> layersTimes;
         double t = net.getPerfProfile(layersTimes);
@@ -390,8 +379,8 @@ int main(int argc, char** argv)
     }
 
     // Release resources.
+    t1.detach();
     destroyAllWindows();
-    terminate();
 
     return 0;
 }
