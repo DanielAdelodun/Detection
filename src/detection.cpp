@@ -8,6 +8,8 @@
 #include <string>
 #include <mutex>
 #include <chrono>
+#include <signal.h>
+#include "servo.hpp"
 
 // Namespaces.
 using namespace cv;
@@ -225,6 +227,23 @@ Mat softmax(Mat &input, float max_value)
   float matsum = sum(output)[0];
   output = output / matsum;
   return output;
+}
+
+// Exit Handlers.
+
+void stop(int exit_code, void * arg)
+{
+  printf("\ntidying up\n");
+  
+  Gimbal *gimbal_ptr = (Gimbal *)arg;
+  gimbal_ptr->disconnect();
+  
+  _exit(0);
+}
+
+void cntl_c(int sig)
+{
+  exit(0);   
 }
 
 inline FILE* connect_to_video_host(string host, string port, bool use_gpu)
@@ -559,6 +578,13 @@ int main(int argc, char **argv)
   Mat frame(args.original_image_width, args.original_image_height, CV_8UC3, frame_buffer);
   printf("Frame size: %dx%d\n", frame.cols, frame.rows);
 
+  // Initialize Gimbal.
+  Gimbal gimbal(args.host);
+
+  on_exit(stop, (void *) &gimbal);
+  if (signal(SIGINT, cntl_c) == SIG_ERR)
+    fprintf(stderr, "signal");
+
   // Main loop.
   double freq = getTickFrequency() / 1000;
   for (;;)
@@ -593,6 +619,50 @@ int main(int argc, char **argv)
     imshow("frame", image);
     if ((char)waitKey(1) == 'q')
       break;
+
+    // Find Elephant in the room.
+    int elephant_index = -1;
+    for (int i = 0; i < class_list.size(); i++)
+    {
+      if (class_list[i] == "elephant")
+      {
+        elephant_index = i;
+        break;
+      }
+    }
+
+    // Find Elephant Detection in Detections.
+  vector<Detection> elephant_detections;
+  for (int i = 0; i < detections.size(); i++)
+  {
+    if (detections[i].class_id == elephant_index)
+    {
+      elephant_detections.push_back(detections[i]);
+    }
+  }
+
+  // Find Elephant with highest confidence.
+  int max_confidence_index = -1;
+  float max_confidence = 0;
+  for (int i = 0; i < elephant_detections.size(); i++)
+  {
+    if (elephant_detections[i].score > max_confidence)
+    {
+      max_confidence = elephant_detections[i].score;
+      max_confidence_index = i;
+    }
+  }
+
+  // If Elephant is detected, track it.
+  if (max_confidence_index != -1)
+  {
+    Detection elephant_detection = elephant_detections[max_confidence_index];
+    Rect elephant_box = elephant_detection.box;
+    int elephant_x = elephant_box.x + elephant_box.width / 2;
+    int elephant_y = elephant_box.y + elephant_box.height / 2;
+    int x_error = elephant_x - image.cols / 2;
+    int y_error = elephant_y - image.rows / 2;
+    pid_loop(gimbal, 1300, 1300);
   }
 
   // Release resources.
