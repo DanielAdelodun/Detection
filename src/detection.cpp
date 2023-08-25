@@ -22,7 +22,7 @@ const char *usage = "Run Yolov6 3.0 or Facebook's DETR.\nConnect to [host]:5001 
                       "    -m, --model <path>                             Path to ONNX model. (default: ../models/model.onnx\n"
                       "    -c, --classname-file <path>                    Path to class name file (default: ../COCO Classnames/coco.names).\n"
                       "    -g, --use-gpu <bool>                           Use GPU or not. (default: true  [1])\n"
-                      "    -a, --host|address <address>                   Host address. (default: gabriel.local)\n"
+                      "    -a, --host|address <address>                   Host address. (default: ariel.local)\n"
                       "    -s, --original-image-size <width>x<height>     Original image size. (default: 1280x1280)\n"
                       "    -S, --input-image-size <width>x<height>        ONNX model's input image size. (default: 640x640)\n"
                       "    -t, --score-threshold <float>                  Score threshold. (default: 0.5)\n"
@@ -38,7 +38,7 @@ class Args
   model_path("../models/yolov6.onnx"),
   class_name_file("../COCO Classnames/coco.names"),
   use_gpu(true),
-  host("gabriel.local"),
+  host("ariel.local"),
   port("5001"),
   original_image_width(1280.0),
   original_image_height(1280.0),
@@ -581,6 +581,11 @@ int main(int argc, char **argv)
   // Initialize Gimbal.
   Gimbal gimbal(args.host);
 
+  // Set Gimbal to Center.
+  gimbal.set_pitch_pulsewidth(1500);
+  gimbal.set_roll_pulsewidth(1500);
+  gimbal.set_yaw_pulsewidth(1500);
+
   on_exit(stop, (void *) &gimbal);
   if (signal(SIGINT, cntl_c) == SIG_ERR)
     fprintf(stderr, "signal");
@@ -613,7 +618,11 @@ int main(int argc, char **argv)
 
     vector<double> layersTimes;
     double t = net.getPerfProfile(layersTimes);
-    cout << format("Frame [%d]:\t%.2f\tms", frame_no + 1, t / freq) << endl;
+    // cout << format("Frame [%d]:\t%.2f\tms", frame_no + 1, t / freq) << endl;
+
+    // Draw Frame Number + Inference Time.
+    string label = format("Frame [%d]:%.2fms", frame_no + 1, t / freq);
+    draw_label(image, label, 0, 0);
 
     cvtColor(image, image, COLOR_RGB2BGR);
     imshow("frame", image);
@@ -631,42 +640,45 @@ int main(int argc, char **argv)
       }
     }
 
-    // Find Elephant Detection in Detections.
-  vector<Detection> elephant_detections;
-  for (int i = 0; i < detections.size(); i++)
-  {
-    if (detections[i].class_id == elephant_index)
+      // Find Elephant Detection in Detections.
+    vector<Detection> elephant_detections;
+    for (int i = 0; i < detections.size(); i++)
     {
-      elephant_detections.push_back(detections[i]);
+      if (detections[i].class_id == elephant_index)
+      {
+        elephant_detections.push_back(detections[i]);
+      }
     }
-  }
 
-  // Find Elephant with highest confidence.
-  int max_confidence_index = -1;
-  float max_confidence = 0;
-  for (int i = 0; i < elephant_detections.size(); i++)
-  {
-    if (elephant_detections[i].score > max_confidence)
+    // Find Elephant with highest confidence.
+    int max_confidence_index = -1;
+    float max_confidence = 0;
+    for (int i = 0; i < elephant_detections.size(); i++)
     {
-      max_confidence = elephant_detections[i].score;
-      max_confidence_index = i;
+      if (elephant_detections[i].score > max_confidence)
+      {
+        max_confidence = elephant_detections[i].score;
+        max_confidence_index = i;
+      }
     }
-  }
 
-  // If Elephant is detected, track it.
-  if (max_confidence_index != -1)
-  {
-    Detection elephant_detection = elephant_detections[max_confidence_index];
-    Rect elephant_box = elephant_detection.box;
-    int elephant_x = elephant_box.x + elephant_box.width / 2;
-    int elephant_y = elephant_box.y + elephant_box.height / 2;
-    int x_error = elephant_x - image.cols / 2;
-    int y_error = elephant_y - image.rows / 2;
-    pid_loop(gimbal, 1300, 1300);
+    // If Elephant is detected, track it.
+    if (max_confidence_index != -1)
+    {
+      Detection elephant_detection = elephant_detections[max_confidence_index];
+      Rect elephant_box = elephant_detection.box;
+      int elephant_x = elephant_box.x + elephant_box.width / 2;
+      int elephant_y = elephant_box.y + elephant_box.height / 2;
+      int x_error = elephant_x - image.cols / 2;
+      int y_error = elephant_y - image.rows / 2;
+      pid_loop(gimbal, - x_error/ 10, y_error/ 10);
+    }
+
   }
 
   // Release resources.
   destroyAllWindows();
   t1.detach();
   return 0;
+
 }

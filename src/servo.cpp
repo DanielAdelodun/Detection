@@ -8,81 +8,66 @@
 
 #include <pigpiod_if2.h>
 
-class Gimbal {
-private:
-  std::string rpi_hostname;
-  int pi;
+#include "servo.hpp"
 
-  int pitch_min = 1200, pitch_max = 1800;
-  int roll_min = 1200, roll_max = 1800;
-  int yaw_min = 1200, yaw_max = 1800;
-
-  int gpio_pitch;
-  int gpio_roll;
-  int gpio_yaw;
-
-public:
-  int pitch = 1500;
-  int roll = 1500;
-  int yaw = 1500;
-
-  Gimbal(std::string rpi_hostname = "ariel.local", int gpio_pitch = 19, int gpio_roll = 20, int gpio_yaw = 21):
-    gpio_pitch(gpio_pitch), gpio_roll(gpio_roll), gpio_yaw(gpio_yaw), rpi_hostname(rpi_hostname)
-  {
-    pi = pigpio_start(rpi_hostname.c_str(), NULL);
-    if (pi < 0) {
-      fprintf(stderr, "Gimbal: Failed to connect to pigpio daemon\n");
-      return;
-    }
+Gimbal::Gimbal(std::string rpi_hostname, int gpio_pitch, int gpio_roll, int gpio_yaw):
+  gpio_pitch(gpio_pitch), gpio_roll(gpio_roll), gpio_yaw(gpio_yaw), rpi_hostname(rpi_hostname)
+{
+  pi = pigpio_start(rpi_hostname.c_str(), NULL);
+  if (pi < 0) {
+    fprintf(stderr, "Gimbal: Failed to connect to pigpio daemon\n");
+    return;
   }
+}
 
-  int get_pi() { return pi; }
+int Gimbal::get_pi() { return pi; }
 
-  int set_pitch_pulsewidth(int pitch_pulsewidth) {
-    if (pitch_pulsewidth < pitch_min || pitch_pulsewidth > pitch_max)
-      return -1;
-    printf("Setting %d pitch to %d\n", gpio_pitch, pitch_pulsewidth);
-    if (set_servo_pulsewidth(pi, gpio_pitch, pitch_pulsewidth) != 0)
-      return -1;
-    pitch = pitch_pulsewidth;
-    return pitch;
-  }
+int Gimbal::set_pitch_pulsewidth(int pitch_pulsewidth) {
+  if (pitch_pulsewidth < pitch_min || pitch_pulsewidth > pitch_max)
+    return -1;
+  printf("Setting %d pitch to %d\n", gpio_pitch, pitch_pulsewidth);
+  if (set_servo_pulsewidth(pi, gpio_pitch, pitch_pulsewidth) != 0)
+    return -1;
+  pitch = pitch_pulsewidth;
+  return pitch;
+}
 
-  int set_roll_pulsewidth(int roll_pulsewidth) {
-    if (roll_pulsewidth < roll_min || roll_pulsewidth > roll_max)
-      return -1;
-    printf("Setting %d roll to %d\n", gpio_roll, roll_pulsewidth);
-    if (set_servo_pulsewidth(pi, gpio_roll, roll_pulsewidth) != 0)
-      return -1;
-    roll = roll_pulsewidth;
-    return roll;
-  }
+int Gimbal::set_roll_pulsewidth(int roll_pulsewidth) {
+  if (roll_pulsewidth < roll_min || roll_pulsewidth > roll_max)
+    return -1;
+  printf("Setting %d roll to %d\n", gpio_roll, roll_pulsewidth);
+  if (set_servo_pulsewidth(pi, gpio_roll, roll_pulsewidth) != 0)
+    return -1;
+  roll = roll_pulsewidth;
+  return roll;
+}
 
-  int set_yaw_pulsewidth(int yaw_pulsewidth) {
-    if (yaw_pulsewidth < yaw_min || yaw_pulsewidth > yaw_max)
-      return -1;
-    printf("Setting %d yaw to %d\n", gpio_yaw, yaw_pulsewidth);
-    if (set_servo_pulsewidth(pi, gpio_yaw, yaw_pulsewidth) != 0)
-      return -1;
-     yaw = yaw_pulsewidth;
-      return yaw;
-  }
+int Gimbal::set_yaw_pulsewidth(int yaw_pulsewidth) {
+  if (yaw_pulsewidth < yaw_min || yaw_pulsewidth > yaw_max)
+    return -1;
+  printf("Setting %d yaw to %d\n", gpio_yaw, yaw_pulsewidth);
+  if (set_servo_pulsewidth(pi, gpio_yaw, yaw_pulsewidth) != 0)
+    return -1;
+    yaw = yaw_pulsewidth;
+    return yaw;
+}
 
-  int disconnect_pitch() {
-    return set_servo_pulsewidth(pi, gpio_pitch, 0);
-  }
-  int disconnect_roll() {
-    return set_servo_pulsewidth(pi, gpio_roll, 0);
-  }
-  int disconnect_yaw() {
-    return set_servo_pulsewidth(pi, gpio_yaw, 0);
-  }
-  void disconnect() {
-    disconnect_yaw(); disconnect_roll(); disconnect_pitch();
-    return pigpio_stop(pi);
-  }
+int Gimbal::disconnect_pitch() {
+  return set_servo_pulsewidth(pi, gpio_pitch, 0);
+}
 
-};
+int Gimbal::disconnect_roll() {
+  return set_servo_pulsewidth(pi, gpio_roll, 0);
+}
+
+int Gimbal::disconnect_yaw() {
+  return set_servo_pulsewidth(pi, gpio_yaw, 0);
+}
+
+void Gimbal::disconnect() {
+  disconnect_yaw(); disconnect_roll(); disconnect_pitch();
+  return pigpio_stop(pi);
+}
 
 void pid_loop(Gimbal &gimbal, int x_error, int y_error) {
 

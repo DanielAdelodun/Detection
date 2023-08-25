@@ -27,9 +27,11 @@ include_directories( ${OpenCV_INCLUDE_DIRS} )
 
 # specify the executable target to be built
 add_executable(yolov6 yolov6.cpp)
-add_executable(detection detection.cpp)
+add_executable(detection servo.cpp detection.cpp)
+add_executable(tests tests.cpp)
 
 # tell it to link the executable target against OpenCV
 # path like /xxx/yyy/opencv/install/lib
 target_link_libraries(yolov6 ${OpenCV_LIBS} )
-target_link_libraries(detection ${OpenCV_LIBS} )
+target_link_libraries(detection ${OpenCV_LIBS} pigpiod_if2)
+target_link_libraries(tests ${OpenCV_LIBS} pigpiod_if2)
